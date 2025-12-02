@@ -37,11 +37,9 @@ def obter_pais_por_ip(ip):
 # Funções comuns de apoio
 # ============================================================
 
+# Pede ao utilizador o caminho para o ficheiro de log
 def pedir_caminho_ficheiro():
-    """
-    Pede ao utilizador o caminho completo para o ficheiro de log
-    e valida se o ficheiro existe.
-    """
+
     while True:
         caminho = input("Caminho completo para o ficheiro de log: ").strip()
 
@@ -60,19 +58,9 @@ def pedir_caminho_ficheiro():
 # Análise de logs SSH (auth.log)
 # ============================================================
 
+# Analisar ficheiro de log SSH
 def analisar_log_ssh(caminho_ficheiro):
-    """
-    Analisa um ficheiro de log de SSH (por exemplo auth.log)
-    e procura tentativas de acesso inválidas:
-      - 'Failed password'
-      - 'Invalid user'
-
-    Devolve um dicionário com estatísticas agregadas por IP de origem.
-    """
-
-    # Exemplo de linha em auth.log:
-    # Feb 23 18:17:53 ubinet sshd[19853]: Failed password for invalid user test from 177.55.88.2 port 56738 ssh2
-
+   
     padrao_ip = re.compile(r"from (\d{1,3}(?:\.\d{1,3}){3})")
 
     total_linhas = 0
@@ -83,7 +71,7 @@ def analisar_log_ssh(caminho_ficheiro):
         for linha in f:
             total_linhas += 1
 
-            # Consideramos como tentativas inválidas linhas que contenham estas expressões
+            # Considera como tentativas inválidas o que contenha estas strings
             if "Failed password" in linha or "Invalid user" in linha:
                 total_tentativas_invalidas += 1
 
@@ -92,7 +80,7 @@ def analisar_log_ssh(caminho_ficheiro):
                 if ip_match:
                     ip_encontrado = ip_match.group(1)
 
-                # Extrair timestamp (formato típico: 'Mmm DD HH:MM:SS')
+                # Extrai timestamp
                 timestamp = linha[:15]
 
                 if ip_encontrado:
@@ -105,7 +93,7 @@ def analisar_log_ssh(caminho_ficheiro):
 
                     por_ip[ip_encontrado]["tentativas"] += 1
 
-                    # Guardamos alguns timestamps para exemplo (não todos)
+                    # Guarda alguns timestamps
                     if len(por_ip[ip_encontrado]["timestamps"]) < 10:
                         por_ip[ip_encontrado]["timestamps"].append(timestamp)
 
@@ -124,19 +112,9 @@ def analisar_log_ssh(caminho_ficheiro):
 # Análise de logs UFW (firewall, ufw.log)
 # ============================================================
 
+# Analisar ficheiro de log UFW
 def analisar_log_ufw(caminho_ficheiro):
-    """
-    Analisa um ficheiro de log do UFW (firewall), procurando linhas com '[UFW BLOCK]'
-    e extraindo IP de origem (SRC), IP de destino (DST), protocolo e porta de destino.
-
-    Exemplo de linha em ufw.log:
-    Feb 25 10:38:19 ubinet kernel: [87092.712750] [UFW BLOCK] IN=eth0 OUT= \
-    SRC=220.181.108.121 DST=193.137.135.82 LEN=60 TOS=0x00 PREC=0x00 TTL=51 \
-    PROTO=TCP SPT=12248 DPT=80 WINDOW=...
-
-    Devolve um dicionário com estatísticas agregadas por IP de origem.
-    """
-
+  
     padrao = re.compile(
         r'^(?P<timestamp>\w{3}\s+\d+\s+\d{2}:\d{2}:\d{2}).*?\[UFW BLOCK\].*?'
         r'SRC=(?P<src_ip>\d{1,3}(?:\.\d{1,3}){3}).*?'
@@ -166,7 +144,7 @@ def analisar_log_ufw(caminho_ficheiro):
             ip_origem = m.group("src_ip")
             timestamp = m.group("timestamp")
             proto = m.group("proto")
-            dpt = m.group("dpt")  # pode ser None
+            dpt = m.group("dpt") 
 
             if ip_origem not in por_ip:
                 por_ip[ip_origem] = {
@@ -203,7 +181,7 @@ def analisar_log_ufw(caminho_ficheiro):
 
 
 # ============================================================
-# Funções de apresentação de resultados
+# Funções para apresentar resultados
 # ============================================================
 
 # Calcula resumo por país
@@ -243,7 +221,7 @@ def mostrar_resumo_por_pais(dados_por_ip, chave_contagem, rotulo_evento):
         percentagem = (quantidade / total_eventos) * 100 if total_eventos > 0 else 0
         print(f" - {pais}: {quantidade} ({percentagem:.2f}%)")
 
-    print()  # linha em branco no fim
+    print() 
 
 def mostrar_resumo_ssh(resultado):
     """
@@ -258,14 +236,14 @@ def mostrar_resumo_ssh(resultado):
         print("\nNão foram encontradas tentativas inválidas associadas a IPs.\n")
         return
 
-    # Top 5 IPs com mais tentativas inválidas
+    # IPs com mais tentativas inválidas
     ips_ordenados = sorted(
         resultado["por_ip"].items(),
         key=lambda item: item[1].get("tentativas", 0),
         reverse=True,
     )
 
-    print("\nTop 5 IPs com mais tentativas inválidas:\n")
+    print("\nIPs com mais tentativas inválidas:\n")
     for ip, info in ips_ordenados[:5]:
         pais = info.get("pais", "Desconhecido (sem informação de GeoIP)")
         tentativas = info.get("tentativas", 0)
@@ -286,11 +264,9 @@ def mostrar_resumo_ssh(resultado):
     mostrar_resumo_por_pais(resultado["por_ip"], "tentativas", "tentativas inválidas")
     print("=== Fim do resumo SSH ===\n")
 
-
+#Mostra resumo da análise de logs UFW
 def mostrar_resumo_ufw(resultado):
-    """
-    Mostra no ecrã um resumo da análise de logs UFW (firewall).
-    """
+
     print("\n=== Resumo da análise de logs UFW (firewall) ===")
     print(f"Ficheiro analisado: {resultado['ficheiro']}")
     print(f"Total de linhas lidas: {resultado['total_linhas']}")
@@ -300,14 +276,14 @@ def mostrar_resumo_ufw(resultado):
         print("\nNão foram encontrados blocos associados a IPs.\n")
         return
 
-    # Top 5 IPs com mais blocos
+    # IPs com mais blocos
     ips_ordenados = sorted(
         resultado["por_ip"].items(),
         key=lambda item: item[1].get("blocos", 0),
         reverse=True,
     )
 
-    print("\nTop 5 IPs com mais blocos UFW:\n")
+    print("\nIPs com mais blocos UFW:\n")
     for ip, info in ips_ordenados[:5]:
         pais = info.get("pais", "Desconhecido (sem informação de GeoIP)")
         blocos = info.get("blocos", 0)
