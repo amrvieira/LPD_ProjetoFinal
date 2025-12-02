@@ -2,6 +2,8 @@ import os
 import re
 import geoip2.database
 import geoip2.errors
+import ipaddress
+
 
 # ============================================================
 # GeoIP2 (MaxMind GeoLite2)
@@ -11,6 +13,11 @@ import geoip2.errors
 GEOIP_DB_PATH = os.path.join(os.path.dirname(__file__), "GeoLite2-City-2025.mmdb")
 
 geoip_reader = geoip2.database.Reader(GEOIP_DB_PATH)
+
+# considerar um IP como "suspeito"
+LIMIAR_TENTATIVAS_SSH_SUSPEITO = 100   # tentativas inválidas de SSH
+LIMIAR_BLOCOS_UFW_SUSPEITO = 200       # blocos na firewall UFW
+
 
 def obter_pais_por_ip(ip):
     """
@@ -223,6 +230,35 @@ def mostrar_resumo_por_pais(dados_por_ip, chave_contagem, rotulo_evento):
 
     print() 
 
+# Verifica se um IP é privado
+def eh_ip_privado(ip):
+    try:
+        endereco = ipaddress.ip_address(ip)
+        return endereco.is_private
+    except ValueError:
+        return False
+
+# Mostra IPs suspeitos
+def mostrar_ips_suspeitos(dados_por_ip, chave_contagem, limiar, rotulo_evento):
+
+    suspeitos = []
+
+    for ip, info in dados_por_ip.items():
+        quantidade = info.get(chave_contagem, 0)
+        if quantidade >= limiar:
+            suspeitos.append((ip, quantidade, info.get("pais", "Desconhecido")))
+
+    if not suspeitos:
+        print(f"\n[IPs Suspeitos] Não foram encontrados IPs com {chave_contagem} >= {limiar} ({rotulo_evento}).\n")
+        return
+    
+    suspeitos.sort(key=lambda item: item[1], reverse=True)
+
+    print(f"\n=== IPs Suspeitos ({rotulo_evento} >= {limiar}) ===\n")
+    for ip, quantidade, pais in suspeitos:
+        print(f" - {ip} País: {pais} | {chave_contagem.capitalize()}: {quantidade}")
+        print()
+
 def mostrar_resumo_ssh(resultado):
     """
     Mostra no ecrã um resumo da análise de logs SSH.
@@ -248,7 +284,14 @@ def mostrar_resumo_ssh(resultado):
         pais = info.get("pais", "Desconhecido (sem informação de GeoIP)")
         tentativas = info.get("tentativas", 0)
         print(f" - {ip}  |  País: {pais}  |  Tentativas: {tentativas}")
-
+    
+    mostrar_ips_suspeitos( 
+        resultado["por_ip"],
+        chave_contagem="tentativas",
+        limiar=LIMIAR_TENTATIVAS_SSH_SUSPEITO,
+        rotulo_evento="tentativas inválidas de SSH"
+    )
+    
     print("\nDetalhe por IP de origem:\n")
 
     for ip, info in ips_ordenados:
@@ -288,7 +331,13 @@ def mostrar_resumo_ufw(resultado):
         pais = info.get("pais", "Desconhecido (sem informação de GeoIP)")
         blocos = info.get("blocos", 0)
         print(f" - {ip}  |  País: {pais}  |  Blocos: {blocos}")
-
+    
+    mostrar_ips_suspeitos(
+        resultado["por_ip"],
+        chave_contagem="blocos",
+        limiar=LIMIAR_BLOCOS_UFW_SUSPEITO,
+        rotulo_evento="blocos UFW"
+    )
     print("\nDetalhe por IP de origem:\n")
 
     for ip, info in ips_ordenados:
