@@ -1,15 +1,41 @@
 import os
 import re
+import geoip2.database
+import geoip2.errors
 
+# ============================================================
+# GeoIP2 (MaxMind GeoLite2)
+# ============================================================
+
+# Caminho base de dadosGeoLite2-City.mmdb
+GEOIP_DB_PATH = os.path.join(os.path.dirname(__file__), "GeoLite2-City-2025.mmdb")
+
+geoip_reader = geoip2.database.Reader(GEOIP_DB_PATH)
 
 def obter_pais_por_ip(ip):
     """
-    Nesta fase, devolve apenas um texto genérico.
-    Mais tarde, vamos integrar uma base de dados GeoIP para obter
-    o país real associado ao IP.
+    Devolve uma string com o país associado ao IP, uso GeoIP2/GeoLite2.
     """
-    return "Desconhecido (GeoIP ainda não implementado)"
+    try: 
+        resposta = geoip_reader.city(ip)
+    except geoip2.errors.AddressNotFoundError:
+        return "Desconhecido (IP não encontrado na base GeoIP)"
+    except Exception:
+        # Em caso de erro, o analisador de logs continua a funcionar
+        return "Desconhecido (erro ao consultar GeoIP)"
+    
+    pais = resposta.country
+    if not pais:
+        return "Desconhecido (sem dados de país)"
+    if pais.iso_code:
+        return pais.iso_code
+    if pais.name:
+        return pais.name
+    return "Desconhecido (sem dados de país)"
 
+# ============================================================
+# Funções comuns de apoio
+# ============================================================
 
 def pedir_caminho_ficheiro():
     """
@@ -17,10 +43,10 @@ def pedir_caminho_ficheiro():
     e valida se o ficheiro existe.
     """
     while True:
-        caminho = input("Caminho para o ficheiro de log: ").strip()
+        caminho = input("Caminho completo para o ficheiro de log: ").strip()
 
         if not caminho:
-            print("Indica um caminho válido.\n")
+            print("Por favor, indica um caminho válido.\n")
             continue
 
         if not os.path.isfile(caminho):
@@ -29,6 +55,10 @@ def pedir_caminho_ficheiro():
 
         return caminho
 
+
+# ============================================================
+# Análise de logs SSH (auth.log)
+# ============================================================
 
 def analisar_log_ssh(caminho_ficheiro):
     """
@@ -39,6 +69,9 @@ def analisar_log_ssh(caminho_ficheiro):
 
     Devolve um dicionário com estatísticas agregadas por IP de origem.
     """
+
+    # Exemplo de linha em auth.log:
+    # Feb 23 18:17:53 ubinet sshd[19853]: Failed password for invalid user test from 177.55.88.2 port 56738 ssh2
 
     padrao_ip = re.compile(r"from (\d{1,3}(?:\.\d{1,3}){3})")
 
@@ -59,7 +92,7 @@ def analisar_log_ssh(caminho_ficheiro):
                 if ip_match:
                     ip_encontrado = ip_match.group(1)
 
-                # Extrair timestamp
+                # Extrair timestamp (formato típico: 'Mmm DD HH:MM:SS')
                 timestamp = linha[:15]
 
                 if ip_encontrado:
@@ -72,8 +105,8 @@ def analisar_log_ssh(caminho_ficheiro):
 
                     por_ip[ip_encontrado]["tentativas"] += 1
 
-                    # Guardar alguns timestamps
-                    if len(por_ip[ip_encontrado]["timestamps"]) < 20:
+                    # Guardamos alguns timestamps para exemplo (não todos)
+                    if len(por_ip[ip_encontrado]["timestamps"]) < 10:
                         por_ip[ip_encontrado]["timestamps"].append(timestamp)
 
     resultado = {
@@ -86,9 +119,24 @@ def analisar_log_ssh(caminho_ficheiro):
 
     return resultado
 
-#analisa logs ufw
+
+# ============================================================
+# Análise de logs UFW (firewall, ufw.log)
+# ============================================================
+
 def analisar_log_ufw(caminho_ficheiro):
- 
+    """
+    Analisa um ficheiro de log do UFW (firewall), procurando linhas com '[UFW BLOCK]'
+    e extraindo IP de origem (SRC), IP de destino (DST), protocolo e porta de destino.
+
+    Exemplo de linha em ufw.log:
+    Feb 25 10:38:19 ubinet kernel: [87092.712750] [UFW BLOCK] IN=eth0 OUT= \
+    SRC=220.181.108.121 DST=193.137.135.82 LEN=60 TOS=0x00 PREC=0x00 TTL=51 \
+    PROTO=TCP SPT=12248 DPT=80 WINDOW=...
+
+    Devolve um dicionário com estatísticas agregadas por IP de origem.
+    """
+
     padrao = re.compile(
         r'^(?P<timestamp>\w{3}\s+\d+\s+\d{2}:\d{2}:\d{2}).*?\[UFW BLOCK\].*?'
         r'SRC=(?P<src_ip>\d{1,3}(?:\.\d{1,3}){3}).*?'
@@ -110,7 +158,7 @@ def analisar_log_ufw(caminho_ficheiro):
 
             m = padrao.search(linha)
             if not m:
-                # Linha não corresponde ao padrão  (ignora)
+                # Linha não corresponde ao padrão esperado (ignoramos)
                 continue
 
             total_blocos += 1
@@ -118,7 +166,7 @@ def analisar_log_ufw(caminho_ficheiro):
             ip_origem = m.group("src_ip")
             timestamp = m.group("timestamp")
             proto = m.group("proto")
-            dpt = m.group("dpt") 
+            dpt = m.group("dpt")  # pode ser None
 
             if ip_origem not in por_ip:
                 por_ip[ip_origem] = {
@@ -154,6 +202,49 @@ def analisar_log_ufw(caminho_ficheiro):
     return resultado
 
 
+# ============================================================
+# Funções de apresentação de resultados
+# ============================================================
+
+# Calcula resumo por país
+def calcular_resumo_por_pais(dados_por_ip, chave_contagem):
+    
+    por_pais = {}
+
+    for ip, info in dados_por_ip.items():
+        pais = info.get("pais", "Desconhecido")
+        quantidade = info.get(chave_contagem, 0)
+
+        if quantidade <= 0:
+            continue
+
+        por_pais[pais] = por_pais.get(pais, 0) + quantidade
+
+    return por_pais
+
+# Mostrar resumo por país
+def mostrar_resumo_por_pais(dados_por_ip, chave_contagem, rotulo_evento):
+    
+    por_pais = calcular_resumo_por_pais(dados_por_ip, chave_contagem)
+
+    if not por_pais:
+        print("\n[Resumo por país] Não há dados suficientes para calcular estatísticas por país.\n")
+        return
+
+    # Ordenar países por eventos
+    paises_ordenados = sorted(por_pais.items(), key=lambda item: item[1], reverse=True)
+    total_eventos = sum(por_pais.values())
+
+    print(f"\nResumo por país ({rotulo_evento}):")
+    print(f"Total de eventos considerados: {total_eventos}\n")
+
+    # Mostrar top 10 países (pode alterar conforem necessário)
+    for pais, quantidade in paises_ordenados[:10]:
+        percentagem = (quantidade / total_eventos) * 100 if total_eventos > 0 else 0
+        print(f" - {pais}: {quantidade} ({percentagem:.2f}%)")
+
+    print()  # linha em branco no fim
+
 def mostrar_resumo_ssh(resultado):
     """
     Mostra no ecrã um resumo da análise de logs SSH.
@@ -167,14 +258,14 @@ def mostrar_resumo_ssh(resultado):
         print("\nNão foram encontradas tentativas inválidas associadas a IPs.\n")
         return
 
-    # IPs com mais tentativas inválidas
+    # Top 5 IPs com mais tentativas inválidas
     ips_ordenados = sorted(
         resultado["por_ip"].items(),
         key=lambda item: item[1].get("tentativas", 0),
         reverse=True,
     )
 
-    print("\nIPs com mais tentativas inválidas:\n")
+    print("\nTop 5 IPs com mais tentativas inválidas:\n")
     for ip, info in ips_ordenados[:5]:
         pais = info.get("pais", "Desconhecido (sem informação de GeoIP)")
         tentativas = info.get("tentativas", 0)
@@ -192,6 +283,7 @@ def mostrar_resumo_ssh(resultado):
                 print(f"    - {ts}")
         print("-" * 50)
 
+    mostrar_resumo_por_pais(resultado["por_ip"], "tentativas", "tentativas inválidas")
     print("=== Fim do resumo SSH ===\n")
 
 
@@ -208,14 +300,14 @@ def mostrar_resumo_ufw(resultado):
         print("\nNão foram encontrados blocos associados a IPs.\n")
         return
 
-    # IPs com mais blocos
+    # Top 5 IPs com mais blocos
     ips_ordenados = sorted(
         resultado["por_ip"].items(),
         key=lambda item: item[1].get("blocos", 0),
         reverse=True,
     )
 
-    print("\nIPs com mais blocos UFW:\n")
+    print("\nTop 5 IPs com mais blocos UFW:\n")
     for ip, info in ips_ordenados[:5]:
         pais = info.get("pais", "Desconhecido (sem informação de GeoIP)")
         blocos = info.get("blocos", 0)
@@ -252,12 +344,17 @@ def mostrar_resumo_ufw(resultado):
 
         print("-" * 50)
 
+    mostrar_resumo_por_pais(resultado["por_ip"], "blocos", "blocos UFW")
     print("=== Fim do resumo UFW ===\n")
 
+
+# ============================================================
+# Menu e função principal
+# ============================================================
+
+# Menu para escolher tipo de log
 def escolher_tipo_log():
-    """
-    Pede ao utilizador para escolher o tipo de log a analisar: SSH ou UFW.
-    """
+
     while True:
         print("=== Analisador de Logs ===")
         print("1) Analisar logs SSH (ex.: auth.log)")
@@ -286,3 +383,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
