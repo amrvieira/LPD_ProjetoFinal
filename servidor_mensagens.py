@@ -1,8 +1,16 @@
 import socket
+import os
+
+from seguranca_mensagens import(
+carregar_chave_simetrica, 
+cifrar_mensagem, 
+decifrar_mensagem)
 
 #Inicia servidor de mensagens 
-def iniciar_servidor(host="0.0.0.0", porta=5000):
+def iniciar_servidor(host="0.0.0.0", porta=5000, fernet=None):
 
+    if fernet is None:
+        raise ValueError("Objeto Fernet inválido. Não foi possível iniciar o servidor (Chave simétrica não carregada).")
     #criar socket TCP
     servidor = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
@@ -63,7 +71,8 @@ def tratar_cliente(socket_cliente):
         "Podes escrever várias linhas; termina com uma linha vazia.\n"
         "Para terminar a sessão, escreve SAIR numa linha.\n"
     )
-    socket_cliente.sendall(mensagem_boas_vindas.encode("utf-8"))
+    token_boas_vindas = cifrar_mensagem(mensagem_boas_vindas, fernet)
+    socket_cliente.sendall(token_boas_vindas)
 
     while True:
         dados = socket_cliente.recv(4096)
@@ -73,7 +82,12 @@ def tratar_cliente(socket_cliente):
             print("[*] Cliente terminou a ligação.")
             break
 
-        texto_recebido = dados.decode("utf-8", errors="ignore").strip()
+        texto_recebido = decifrar_mensagem(dados_cifrados, fernet)
+        if texto_recebido is None:
+            print("[!] Não foi possivel decifrar a mensagem recebida.")
+            break
+
+        texto_recebido = texto_recebido.strip()
 
         if texto_recebido.upper() == "SAIR":
             print("[*] Cliente pediu para terminar a sessão.")
@@ -91,12 +105,14 @@ def tratar_cliente(socket_cliente):
             continue
 
         if resposta.upper() == "SAIR":
-            socket_cliente.sendall("SAIR\n".encode("utf-8"))
+            token_sair = cifrar_mensagem("SAIR", fernet)
+            socket_cliente.sendall(token_sair)
             print("[*] Servidor solicitou fim de sessão.")
             break
 
-        # Envia a resposta (que pode ter várias linhas)
-        socket_cliente.sendall((resposta + "\n").encode("utf-8"))
+        # Envia a resposta (cifrada que pode ter várias linhas)
+        token_resposta = cifrar_mensagem(resposta, fernet)
+        socket_cliente.sendall(token_resposta)
     
 def main():
     print("=== Servidor de Mensagens ===")
@@ -111,8 +127,17 @@ def main():
             porta = 5000
     else:
         porta = 5000        
+    
+    #carrega chave simétrica
+    caminho_chave = "chave_simetrica.key"
+    try:
+        fernet = carregar_chave_simetrica(caminho_chave)
+    except Exception as erro:
+        print(f"[ERRO] Não foi possível carregar a chave simétrica: {erro}")
+        return
+    
 
-    iniciar_servidor(porta=porta)
+    iniciar_servidor(porta=porta, fernet=fernet)
 
 if __name__ == "__main__":
     main()

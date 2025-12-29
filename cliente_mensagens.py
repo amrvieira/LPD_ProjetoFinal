@@ -1,4 +1,9 @@
 import socket
+from seguranca_mensagens import (
+    carregar_chave_simetrica,
+    cifrar_mensagem,
+    decifrar_mensagem
+)
 
 #permite mensagens em varias linhas
 def ler_mensagem_multilinha(rotulo):
@@ -16,7 +21,7 @@ def ler_mensagem_multilinha(rotulo):
     return mensagem
 
 # Liga-se ao servidor de mensagens e inicia conversa
-def ligar_ao_servidor(endereco_servidor, porta_servidor):
+def ligar_ao_servidor(endereco_servidor, porta_servidor, fernet):
 
     cliente = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
@@ -25,12 +30,15 @@ def ligar_ao_servidor(endereco_servidor, porta_servidor):
         cliente.connect((endereco_servidor, porta_servidor))
         print("[+] Ligação estabelecida.\n")
 
-        # Recebe a mensagem de boas-vindas do servidor
+        # Recebe a mensagem de boas-vindas do servidor cifrada
         try:
             dados_iniciais = cliente.recv(4096)
             if dados_iniciais:
-                texto_inicial = dados_iniciais.decode("utf-8", errors="ignore")
-                print(texto_inicial)
+                texto_inicial = decifrar_mensagem(dados_iniciais, fernet)
+                if texto_inicial is not None:
+                    print(texto_inicial)
+                else: 
+                    print("[!] Não foi possível decifrar a mensagem do servidor.")   
         except Exception:
             # Se der erro na leitura inicial ignora
             pass
@@ -45,7 +53,8 @@ def ligar_ao_servidor(endereco_servidor, porta_servidor):
                 continue
 
             # Envia mensagem ao servidor
-            cliente.sendall((mensagem + "\n").encode("utf-8"))
+            token_envio = cifrar_mensagem(fernet, mensagem)
+            cliente.sendall(token_envio)
 
             if mensagem.upper() == "SAIR":
                 print("[*] A terminar ligação com o servidor.")
@@ -57,15 +66,11 @@ def ligar_ao_servidor(endereco_servidor, porta_servidor):
                 print("[*] Servidor fechou a ligação.")
                 break
 
-            resposta = dados_resposta.decode("utf-8", errors="ignore").strip()
-            print(f"[Servidor]\n{resposta}")
-            print("-" * 40)
-
-            if resposta.upper() == "SAIR":
-                print("[*] Servidor terminou a sessão.")
+            resposta = decifrar_mensagem(dados_resposta, fernet)
+            if resposta is None:
+                print("[!] Não foi possível decifrar a resposta do servidor.")
                 break
-
-    except ConnectionRefusedError:
+    except ConnectionRefusedError: 
         print(f"[ERRO] Não foi possível ligar ao servidor.")
     except KeyboardInterrupt:
         print("\n[!] Ligação encerrada pelo utilizador.")
@@ -73,7 +78,7 @@ def ligar_ao_servidor(endereco_servidor, porta_servidor):
         cliente.close()
         print("[*] Ligação encerrada.")
 
-
+           
 def main():
     print("=== Cliente de Mensagens ===")
 
@@ -87,6 +92,14 @@ def main():
         porta = int(texto_porta)
     except ValueError:
         print("[ERRO] Porta inválida.")
+        return
+    
+    #carrega chave simétrica
+    caminho_chave = "chave_simetrica.key"
+    try:
+        fernet = carregar_chave_simetrica(caminho_chave)
+    except Exception as erro:
+        print(f"[ERRO] Não foi possível carregar a chave simétrica: {erro}")
         return
 
     ligar_ao_servidor(endereco, porta)
